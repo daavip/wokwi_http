@@ -7,15 +7,19 @@
 
 DHT dht(DHTPIN, DHTTYPE);
 
-
 const char* ssid = "Wokwi-GUEST";
 const char* password = "";
 
-const char* serverUrl = "https://fabulous-intranet-video-turning.trycloudflare.com/api/leituras";
+// ⚠️⚠️ MODIFIQUE A URL ⚠️⚠️
+const char* serverUrl = "https://url.trycloudflare.com/api/leituras";
 
-unsigned long sendInterval = 10000;
+// Variáveis para classificar os eventos
+float previousTemperature = 0.0;
+unsigned long previousTime = 0;
+
+// Agora enviamos todos os dados a cada 5 segundos (5000 ms)
+unsigned long sendInterval = 5000; 
 unsigned long lastSend = 0;
-
 
 void setup(){
   Serial.begin(115200);
@@ -25,15 +29,46 @@ void setup(){
 }
 
 void loop(){
-  if (millis() - lastSend > sendInterval) {
-    lastSend = millis();
+  unsigned long currentTime = millis();
+  
+  // Executa a cada 5 segundos
+  if (currentTime - lastSend > sendInterval) {
+    lastSend = currentTime;
 
     float temperature;
     float humidity;
+    
     if(readSensor(temperature, humidity)){
-      String jsonPayload = buildJson(temperature, humidity);
       
+      String eventDetected = "normal"; // Por padrão, tudo está normal
+
+      // ==========================================
+      // Classificação do Evento (Sem bloquear o envio)
+      // ==========================================
+      if (temperature > 30.0) {
+        eventDetected = "temperatura_alta";
+      }
+
+      unsigned long timeDifference = currentTime - previousTime;
+      float tempDifference = abs(temperature - previousTemperature);
+
+      // Se variou 5 graus ou mais desde o último envio
+      if (tempDifference >= 5.0 && timeDifference <= sendInterval) {
+        eventDetected = "variacao_abrupta";
+      }
+
+      // ==========================================
+      // Envio Contínuo
+      // ==========================================
+      Serial.println("\n[+] Coleta realizada. Enviando dados para o servidor...");
+      Serial.print("Classificação: "); Serial.println(eventDetected);
+      
+      String jsonPayload = buildJson(temperature, humidity, eventDetected);
       sendHTTP(jsonPayload);
+
+      // Atualiza o histórico para a próxima leitura
+      previousTemperature = temperature;
+      previousTime = currentTime;
     }
   }
 }
@@ -50,7 +85,6 @@ void connectWiFi(){
   Serial.println("\nWiFi conectado!");
   Serial.println("IP: ");
   Serial.println(WiFi.localIP());
-
 }
 
 bool readSensor(float &temperature, float &humidity){
@@ -62,28 +96,25 @@ bool readSensor(float &temperature, float &humidity){
     return false;
   } 
 
-  Serial.print("Temperatura: ");
-  Serial.println(temperature);
-
-  Serial.print("Umidade: ");
-  Serial.println(humidity);
+  Serial.print("\nLeitura - Temp: ");
+  Serial.print(temperature);
+  Serial.print("°C | Umidade: ");
+  Serial.print(humidity);
+  Serial.println("%");
 
   return true;
-
 }
 
-String buildJson(int raw, float percent){
+String buildJson(float temp, float hum, String evento){
   unsigned long timestamp = millis();
 
   String json = "{";
   json += "\"device_id\":\"esp32-01\",";
   json += "\"timestamp\":" + String(timestamp) + ",";
-  json += "\"soil_moisture_raw\":" + String(raw) + ",";
-  json += "\"soil_moisture_percent\":" + String(percent, 2);
+  json += "\"temperatura\":" + String(temp, 2) + ",";
+  json += "\"umidade\":" + String(hum, 2) + ",";
+  json += "\"evento\":\"" + evento + "\"";
   json += "}";
-
-  Serial.println("JSON Gerado: ");
-  Serial.println(json);
 
   return json;
 }
@@ -96,15 +127,16 @@ void sendHTTP(String payload) {
 
     int httpResponseCode = http.POST(payload);
 
-    Serial.print("HTTP Response code: ");
-    Serial.println(httpResponseCode);
-
-    String response = http.getString();
-    Serial.println("Resposta do Servidor: ");
-    Serial.println(response);
+    if (httpResponseCode > 0) {
+      Serial.print("HTTP Response code: ");
+      Serial.println(httpResponseCode);
+    } else {
+      Serial.print("Erro HTTP: ");
+      Serial.println(http.errorToString(httpResponseCode).c_str());
+    }
 
     http.end();
-  } else{
+  } else {
     Serial.println("Wifi desconectado.");
   }
 }
