@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard ESP32 - Edge Computing</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f4f7f6; margin: 0; padding: 20px; color: #333; }
+        .container { max-width: 1000px; margin: 0 auto; }
+        h1 { text-align: center; color: #2c3e50; }
+        
+        /* Estilo dos Cards de Resumo */
+        .cards { display: flex; gap: 20px; justify-content: space-between; margin-bottom: 30px; }
+        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); flex: 1; text-align: center; }
+        .card h3 { margin: 0 0 10px 0; color: #7f8c8d; font-size: 16px; }
+        .card .valor { font-size: 28px; font-weight: bold; color: #2980b9; }
+        .card .alerta { color: #e74c3c; }
+
+        /* Estilo da área do Gráfico */
+        .grafico-container { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Dashboard de Sensores</h1>
+
+    <div class="cards">
+        <div class="card">
+            <h3>Última Temperatura</h3>
+            <div class="valor" id="card-temp">-- °C</div>
+        </div>
+        <div class="card">
+            <h3>Última Umidade</h3>
+            <div class="valor" id="card-umid">-- %</div>
+        </div>
+        <div class="card">
+            <h3>Último Evento</h3>
+            <div class="valor alerta" id="card-evento" style="font-size: 20px;">--</div>
+        </div>
+    </div>
+
+    <div class="grafico-container">
+        <canvas id="meuGrafico"></canvas>
+    </div>
+</div>
+
+<script>
+    let chartInstancia = null;
+
+    // Função para buscar os dados na nossa API Node.js
+    async function carregarDados() {
+        try {
+            const resposta = await fetch('/api/leituras');
+            const dados = await resposta.json();
+
+            if (dados.length === 0) return;
+
+            // Pega a leitura mais recente (a primeira da lista, pois o SQL ordena por DESC)
+            const ultimaLeitura = dados[0];
+            document.getElementById('card-temp').innerText = ultimaLeitura.temperatura + ' °C';
+            document.getElementById('card-umid').innerText = ultimaLeitura.umidade + ' %';
+            document.getElementById('card-evento').innerText = ultimaLeitura.evento.replace('_', ' ').toUpperCase();
+
+            // Para o gráfico, vamos pegar as últimas 15 leituras e inverter a ordem 
+            // (para o tempo mais antigo ficar à esquerda e o mais novo à direita)
+            const dadosGrafico = dados.slice(0, 15).reverse();
+
+            const labels = dadosGrafico.map(d => {
+                const data = new Date(d.recebido_em);
+                return data.toLocaleTimeString('pt-BR'); // Mostra só a hora (ex: 14:30:00)
+            });
+            const temperaturas = dadosGrafico.map(d => d.temperatura);
+
+            atualizarGrafico(labels, temperaturas);
+
+        } catch (erro) {
+            console.error("Erro ao buscar dados:", erro);
+        }
+    }
+
+    // Função para desenhar ou atualizar o gráfico Chart.js
+    function atualizarGrafico(labels, dadosTemp) {
+        const ctx = document.getElementById('meuGrafico').getContext('2d');
+
+        // Se o gráfico já existe, nós o destruímos para desenhar o novo por cima
+        if (chartInstancia) {
+            chartInstancia.destroy();
+        }
+
+        chartInstancia = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Temperatura (°C)',
+                    data: dadosTemp,
+                    borderColor: '#e74c3c',
+                    backgroundColor: 'rgba(231, 76, 60, 0.2)',
+                    borderWidth: 2,
+                    tension: 0.3, // Deixa a linha curvada e suave
+                    fill: true
+                }]
+            },
+            options: {
+                responsive: true,
+                animation: false, // Desliga a animação para não piscar no auto-refresh
+                scales: {
+                    y: {
+                        beginAtZero: false,
+                        suggestedMin: 20, // Ajuste dependendo do seu ambiente
+                        suggestedMax: 40
+                    }
+                }
+            }
+        });
+    }
+
+    // Carrega os dados imediatamente ao abrir a página
+    carregarDados();
+
+    // Atualiza os dados automaticamente a cada 5 segundos
+    setInterval(carregarDados, 5000);
+
+</script>
+
+</body>
+</html>
